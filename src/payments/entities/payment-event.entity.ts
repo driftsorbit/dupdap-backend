@@ -13,6 +13,7 @@ export enum PaymentEventType {
   CONFIRMED = 'confirmed',
   EXPIRED = 'expired',
   REFUNDED = 'refunded',
+  CANCELLED = 'cancelled',
 }
 
 @Entity('payment_events')

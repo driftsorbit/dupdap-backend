@@ -434,6 +434,38 @@ export class PaymentsService {
     return payment;
   }
 
+  async cancel(id: string, merchantId: string): Promise<Payment> {
+    const payment = await this.findOne(id, merchantId);
+    if (payment.status !== PaymentStatus.PENDING) {
+      throw new BadRequestException('Only PENDING payments can be cancelled');
+    }
+    const previousStatus = payment.status;
+    // Invoke Soroban refund if funds in escrow
+    try {
+      await this.soroban.cancelOrRefund?.(payment.id);
+    } catch (e) {
+      this.logger.warn(`Soroban refund skipped/failed: ${e?.message}`);
+    }
+    payment.status = PaymentStatus.CANCELLED;
+    const saved = await this.paymentsRepo.save(payment);
+    await this.recordEvent(payment.id, PaymentEventType.CANCELLED, previousStatus, PaymentStatus.CANCELLED, merchantId);
+    await this.webhooks.dispatch(payment.merchantId, 'payment.cancelled', {
+      paymentId: payment.id,
+      reference: payment.reference,
+      status: payment.status,
+    });
+    // customer email notification
+    if (payment.customerEmail) {
+      try {
+        await this.notifications.sendEmail?.(payment.customerEmail, 'Payment cancelled', `Your payment ${payment.reference} was cancelled.`);
+      } catch (e) {
+        this.logger.warn(`Email notification failed: ${e?.message}`);
+      }
+    }
+    this.analytics.clearCacheForMerchant(payment.merchantId);
+    return saved;
+  }
+
   async getStats(merchantId: string) {
     return this.paymentsRepo
       .createQueryBuilder('payment')
